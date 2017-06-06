@@ -148,30 +148,36 @@ class PiServe:
 
 class DotHandler:
     max_chars = 16
+    color_white = [255, 255, 255]
+    color_beer = [255, 204, 0]
+    color_red = [255, 0, 0]
 
-    def __init__(self):
+    def __init__(self, opts):
         self.step = 0
+        self.options = opts
+
+    def reset_display(self):
+        backlight.rgb(*self.color_white) # Set white background
+        lcd.clear()
 
     def show_progress(self, fm):
         if self.step == 0:
-            lcd.clear()
+            self.reset_display()
         self.step += 1
-        backlight.sweep((self.step % 360) / 360.0)
-        backlight.rgb(255, 255, 0)
         self.write_poured_info(fm)
+        self.backlight_progress(fm)
         #self.write_debug_info(fm)
 
     def show_small_pour(self, fm):
         self.step = 0
-        lcd.clear()
-        backlight.rgb(255, 0, 0)
+        self.reset_display()
+        backlight.rgb(*self.color_red)
         self.write_centered(1, "No beer for you!")
         self.write_centered(0, self.poured_message(fm))
 
     def show_large_pour(self, fm):
         self.step = 0
-        lcd.clear()
-        backlight.rgb(255, 255, 255)
+        self.reset_display()
         self.write_centered(0, "Cheers!")
         self.write_centered(1, self.poured_message(fm))
 
@@ -188,6 +194,16 @@ class DotHandler:
         self.write_right(0, fm.getFormattedFlow())
         self.write_right(1, fm.getFormattedHertz())
         self.write_right(2, fm.getFormattedClickDelta())
+
+    def backlight_progress(self, fm):
+        # Sweep if progress > target
+        progress = fm.thisPour / self.options['target_pour_size']
+        for index in range(6):
+            if (index / 6) < progress:
+                color = self.color_beer
+            else:
+                color = self.color_white
+            backlight.single_rgb(index, *color)
 
     def centiliters(self, fm):
         return round(fm.thisPour * 100)
@@ -226,9 +242,10 @@ if __name__ == '__main__':
             'large_pour_inactivity': int(os.environ.get('PISERVE_LARGE_POUR_INACTIVITY')),
             'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
             'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
+            'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
             'units': os.environ.get('PISERVE_UNITS'),
             'beverage': os.environ.get('PISERVE_BEVERAGE'),
             }
     print(opts)
-    dt = DotHandler()
+    dt = DotHandler(opts)
     PiServe(dt, opts).run()
