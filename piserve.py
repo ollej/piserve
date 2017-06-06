@@ -65,12 +65,12 @@ class PiServe:
         Method called after `large_pour_inactivity` time in seconds if thisPour is more than
         `minimum_pour_size`.
         """
-        values = [self.fm.getFormattedThisPour(), self.fm.getBeverage()]
-        message = "\nSomeone just poured {0} of {1}".format(*values)
-        print(message)
+        #values = [self.fm.getFormattedThisPour(), self.fm.getBeverage()]
+        #message = "\nSomeone just poured {0} of {1}".format(*values)
+        #print(message)
         if self.handler:
-            self.handler.large_pour(self.fm)
-        self.reset_current_pour()
+            self.handler.show_large_pour(self.fm)
+        self.fm.reset_pour(True)
 
     def trigger_small_pour(self):
         """
@@ -78,26 +78,20 @@ class PiServe:
         `minimum_pour_size`. Currently implemented to cancel pour and reset pour counter.
         """
         if self.handler:
-            self.handler.small_pour(self.fm)
-        values = [self.fm.getFormattedThisPour(), self.fm.getBeverage()]
-        message = "\nsmall pour {0} of {1}".format(*values)
-        print(message)
-        self.reset_current_pour()
+            self.handler.show_small_pour(self.fm)
+        #values = [self.fm.getFormattedThisPour(), self.fm.getBeverage()]
+        #message = "\nsmall pour {0} of {1}".format(*values)
+        #print(message)
+        self.fm.reset_pour(False)
 
     def trigger_progress(self):
         """
         Triggered every `progress_interval` milliseconds while pouring.
         """
         self.last_progress = self.current_time()
-        print(':', end='', flush=True)
+        #print(':', end='', flush=True)
         if self.handler:
-            self.handler.progress(self.fm)
-
-    def reset_current_pour(self):
-        """
-        Resest thisPour on the FlowMeter()
-        """
-        self.fm.thisPour = 0.0
+            self.handler.show_progress(self.fm)
 
     def has_poured(self):
         return self.fm.thisPour > 0
@@ -158,36 +152,57 @@ class DotHandler:
     def __init__(self):
         self.step = 0
 
-    def progress(self, fm):
+    def show_progress(self, fm):
         if self.step == 0:
             lcd.clear()
         self.step += 1
         backlight.sweep((self.step % 360) / 360.0)
         backlight.rgb(255, 255, 0)
-        self.write_right(0, fm.getFormattedFlow())
-        self.write_right(1, fm.getFormattedHertz())
-        self.write_right(2, fm.getFormattedClickDelta())
-        self.write_msg(0, 0, self.formatted_centiliters(fm))
+        self.write_poured_info(fm)
+        #self.write_debug_info(fm)
 
-    def small_pour(self, fm):
+    def show_small_pour(self, fm):
         self.step = 0
         lcd.clear()
         backlight.rgb(255, 0, 0)
         self.write_centered(1, "No beer for you!")
         self.write_centered(0, self.poured_message(fm))
 
-    def large_pour(self, fm):
+    def show_large_pour(self, fm):
         self.step = 0
         lcd.clear()
         backlight.rgb(255, 255, 255)
         self.write_centered(0, "Cheers!")
         self.write_centered(1, self.poured_message(fm))
 
+    def show_idle(self, fm):
+        self.write_msg(0, 0, fm.beverage)
+        self.write_msg(0, 1, self.pours_message(fm))
+        self.write_msg(0, 2, self.total_message(fm))
+
+    def write_poured_info(self, fm):
+        self.write_centered(0, fm.beverage)
+        self.write_centered(1, self.formatted_centiliters(fm))
+
+    def write_debug_info(self, fm):
+        self.write_right(0, fm.getFormattedFlow())
+        self.write_right(1, fm.getFormattedHertz())
+        self.write_right(2, fm.getFormattedClickDelta())
+
     def centiliters(self, fm):
         return round(fm.thisPour * 100)
 
     def formatted_centiliters(self, fm):
         return "{0} cl".format(self.centiliters(fm))
+
+    def formatted_total(self, fm):
+        return "{0} L".format(str(round(fm.totalPour,1)))
+
+    def total_message(self, fm):
+        return "Totalt: {0} L".format(self.formatted_total(fm))
+
+    def pours_message(self, fm):
+        return "Antal: {0} st".format(fm.pours)
 
     def poured_message(self, fm):
         return "Poured {0}".format(self.formatted_centiliters(fm))
