@@ -49,6 +49,7 @@ class PiServe:
         # set up the flow meter
         self.fm = FlowMeter(self.options['units'], [self.options['beverage']])
         self.last_progress = self.current_time()
+        self.update_idle()
 
     def trigger_click(self, channel):
         """
@@ -92,6 +93,20 @@ class PiServe:
         #print(':', end='', flush=True)
         if self.handler:
             self.handler.show_progress(self.fm)
+
+    def trigger_idle(self):
+        """
+        Triggered every `idle_interval` seconds after pouring.
+        """
+        self.update_idle()
+        if self.handler:
+            self.handler.show_idle(self.fm)
+
+    def update_idle(self):
+        """
+        Updates last idle time.
+        """
+        self.last_idle = self.current_time()
 
     def has_poured(self):
         return self.fm.thisPour > 0
@@ -141,6 +156,8 @@ class PiServe:
 
                 elif (self.time_passed_greater_than(self.last_progress, self.progress_interval)):
                     self.trigger_progress()
+            elif self.inactive_for(self.last_idle, self.options['idle_interval']):
+                self.trigger_idle()
 
       # TODO: Catch interrupts and cleanup
       #GPIO.cleanup()
@@ -182,6 +199,7 @@ class DotHandler:
         self.write_centered(1, self.poured_message(fm))
 
     def show_idle(self, fm):
+        self.reset_display()
         self.write_msg(0, 0, fm.beverage)
         self.write_msg(0, 1, self.pours_message(fm))
         self.write_msg(0, 2, self.total_message(fm))
@@ -243,6 +261,7 @@ if __name__ == '__main__':
             'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
             'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
             'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
+            'idle_interval': float(os.environ.get('PISERVE_IDLE_INTERVAL')),
             'units': os.environ.get('PISERVE_UNITS'),
             'beverage': os.environ.get('PISERVE_BEVERAGE'),
             }
