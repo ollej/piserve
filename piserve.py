@@ -167,9 +167,21 @@ class DotHandler:
     color_beer = [255, 204, 0]
     color_red = [255, 0, 0]
 
-    def __init__(self, opts):
+    def __init__(self, opts=None):
         self.step = 0
-        self.options = opts
+        self.options = opts or self.read_options()
+
+    def read_options(self):
+        return {
+            'gpio_pin': int(os.environ.get('PISERVE_GPIO_PIN')),
+            'large_pour_inactivity': int(os.environ.get('PISERVE_LARGE_POUR_INACTIVITY')),
+            'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
+            'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
+            'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
+            'idle_interval': float(os.environ.get('PISERVE_IDLE_INTERVAL')),
+            'units': os.environ.get('PISERVE_UNITS'),
+            'beverage': os.environ.get('PISERVE_BEVERAGE'),
+            }
 
     def reset_display(self):
         backlight.rgb(*self.color_white) # Set white background
@@ -252,17 +264,5 @@ class DotHandler:
         lcd.write(msg)
 
 if __name__ == '__main__':
-    # TODO: Loop and find configs automatically
-    opts = {
-            'gpio_pin': int(os.environ.get('PISERVE_GPIO_PIN')),
-            'large_pour_inactivity': int(os.environ.get('PISERVE_LARGE_POUR_INACTIVITY')),
-            'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
-            'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
-            'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
-            'idle_interval': float(os.environ.get('PISERVE_IDLE_INTERVAL')),
-            'units': os.environ.get('PISERVE_UNITS'),
-            'beverage': os.environ.get('PISERVE_BEVERAGE'),
-            }
-    print(opts)
-    dt = DotHandler(opts)
-    PiServe(dt, opts).run()
+    dt = DotHandler()
+    PiServe(dt, dt.options).run()
