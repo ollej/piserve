@@ -15,16 +15,14 @@ from dothat import lcd, backlight
 Setup a FlowMeter and trigger on pours.
 
 TODO: Calibration value to adjust flow for different pressures.
-TODO: Subclass for handlers, or send in handler object?
 TODO: Config for liters when starting
 TODO: Keep track of how much is left in keg
+TODO: Extend flowmeter?
+TODO: Refactor formatting methods into presenter
 
 DOTHAT plugin:
-TODO: Class to update DOTHAT with info.
+TODO: Invert classes, instantiate DotHandler with PiServe.
 TOSO: Idle plugin to show beer info and total pours and liters poured.
-TODO: Display info about pour
-TODO: Keep count of pours served
-TODO: Show progression when pouring with lights and stats
 TODO: Read vote buttons and keep score
 TODO: Take photo when pressing button and tweet
 """
@@ -233,7 +231,7 @@ class DotHandler:
         return "{0} L".format(str(round(fm.totalPour,1)))
 
     def total_message(self, fm):
-        return "Totalt: {0} L".format(self.formatted_total(fm))
+        return "Totalt: {0}".format(self.formatted_total(fm))
 
     def pours_message(self, fm):
         return "Antal: {0} st".format(fm.pours)
