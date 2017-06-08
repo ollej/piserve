@@ -233,6 +233,10 @@ class DotHandler:
                 color = self.color_white
             backlight.single_rgb(index, *color)
 
+    def sweep(self, iterations=1000):
+        for x in range(iterations):
+            backlight.sweep((x % 360) / 360.0)
+
     def centiliters(self, fm):
         return round(fm.thisPour * 100)
 
