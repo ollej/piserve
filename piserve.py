@@ -14,17 +14,6 @@ from dothat import lcd, backlight
 """
 Setup a FlowMeter and trigger on pours.
 
-TODO: Calibration value to adjust flow for different pressures.
-TODO: Config for liters when starting
-TODO: Keep track of how much is left in keg
-TODO: Extend flowmeter?
-TODO: Refactor formatting methods into presenter
-
-DOTHAT plugin:
-TODO: Invert classes, instantiate DotHandler with PiServe.
-TOSO: Idle plugin to show beer info and total pours and liters poured.
-TODO: Read vote buttons and keep score
-TODO: Take photo when pressing button and tweet
 """
 class PiServe:
     last_progress = 0
@@ -47,7 +36,7 @@ class PiServe:
         # set up the flow meter
         self.fm = FlowMeter(self.options['units'], [self.options['beverage']])
         self.last_progress = self.current_time()
-        self.update_idle()
+        self.trigger_idle()
 
     def trigger_click(self, channel):
         """
@@ -154,7 +143,7 @@ class PiServe:
 
                 elif (self.time_passed_greater_than(self.last_progress, self.progress_interval)):
                     self.trigger_progress()
-            elif self.inactive_for(self.last_idle, self.options['idle_interval']):
+            elif self.time_passed_greater_than(self.last_idle, self.options['idle_interval'] * FlowMeter.MS_IN_A_SECOND):
                 self.trigger_idle()
 
       # TODO: Catch interrupts and cleanup
@@ -185,6 +174,7 @@ class DotHandler:
 
     def reset_display(self):
         backlight.rgb(*self.color_white) # Set white background
+        backlight.set_graph(0)
         lcd.clear()
 
     def show_progress(self, fm):
@@ -193,6 +183,7 @@ class DotHandler:
         self.step += 1
         self.write_poured_info(fm)
         self.backlight_progress(fm)
+        backlight.set_graph(self.get_progress(fm))
         #self.write_debug_info(fm)
 
     def show_small_pour(self, fm):
@@ -201,21 +192,24 @@ class DotHandler:
         backlight.rgb(*self.color_red)
         self.write_centered(1, "No beer for you!")
         self.write_centered(0, self.poured_message(fm))
+        time.sleep(5)
 
     def show_large_pour(self, fm):
         self.step = 0
         self.reset_display()
         self.write_centered(0, "Cheers!")
         self.write_centered(1, self.poured_message(fm))
+        self.sweep()
+        time.sleep(5)
 
     def show_idle(self, fm):
         self.reset_display()
-        self.write_msg(0, 0, fm.beverage)
+        self.write_msg(0, 0, fm.getBeverage())
         self.write_msg(0, 1, self.pours_message(fm))
         self.write_msg(0, 2, self.total_message(fm))
 
     def write_poured_info(self, fm):
-        self.write_centered(0, fm.beverage)
+        self.write_centered(0, fm.getBeverage())
         self.write_centered(1, self.formatted_centiliters(fm))
 
     def write_debug_info(self, fm):
@@ -225,9 +219,8 @@ class DotHandler:
 
     def backlight_progress(self, fm):
         # Sweep if progress > target
-        progress = fm.thisPour / self.options['target_pour_size']
         for index in range(6):
-            if (index / 6) < progress:
+            if (index / 6) < self.get_progress(fm):
                 color = self.color_beer
             else:
                 color = self.color_white
@@ -236,6 +229,9 @@ class DotHandler:
     def sweep(self, iterations=1000):
         for x in range(iterations):
             backlight.sweep((x % 360) / 360.0)
+
+    def get_progress(self, fm):
+        return fm.thisPour / self.options['target_pour_size']
 
     def centiliters(self, fm):
         return round(fm.thisPour * 100)
@@ -247,13 +243,13 @@ class DotHandler:
         return "{0} L".format(str(round(fm.totalPour,1)))
 
     def total_message(self, fm):
-        return "Totalt: {0}".format(self.formatted_total(fm))
+        return "{0} serverat".format(self.formatted_total(fm))
 
     def pours_message(self, fm):
-        return "Antal: {0} st".format(fm.pours)
+        return "{0} serveringar".format(fm.pours)
 
     def poured_message(self, fm):
-        return "Poured {0}".format(self.formatted_centiliters(fm))
+        return "Serverade {0}".format(self.formatted_centiliters(fm))
 
     def write_centered(self, row, msg):
         pos = int((self.max_chars - len(msg)) / 2)
@@ -270,3 +266,4 @@ class DotHandler:
 if __name__ == '__main__':
     dt = DotHandler()
     PiServe(dt, dt.options).run()
+
