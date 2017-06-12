@@ -150,6 +150,29 @@ class PiServe:
       #GPIO.cleanup()
       #fm.clear()
 
+class LedPulse:
+    leds = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 1, 0, 0],
+            [0, 1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1, 1],
+            [0, 1, 1, 1, 1, 0],
+            [0, 0, 1, 1, 0, 0],
+            ]
+
+    def __init__(self):
+        self.iteration = 0
+
+    def next(self):
+        led_list = self.leds[self.iteration]
+        self.iteration += 1
+        if self.iteration >= 6:
+            self.reset()
+        return led_list
+
+    def reset(self):
+        self.iteration = 0
+
 class DotHandler:
     max_chars = 16
     color_white = [255, 255, 255]
@@ -158,6 +181,7 @@ class DotHandler:
 
     def __init__(self, opts=None):
         self.step = 0
+        self.ledpulse = LedPulse()
         self.options = opts or self.read_options()
 
     def read_options(self):
@@ -176,6 +200,7 @@ class DotHandler:
         backlight.rgb(*self.color_white) # Set white background
         backlight.set_graph(0)
         lcd.clear()
+        self.ledpulse.reset()
 
     def show_progress(self, fm):
         if self.step == 0:
@@ -229,6 +254,17 @@ class DotHandler:
     def sweep(self, iterations=1000):
         for x in range(iterations):
             backlight.sweep((x % 360) / 360.0)
+            if x % 10 == 0:
+                self.set_bargraph(self.ledpulse.next())
+
+    def led_pulse(self, iterations=100, sleep=0.1):
+        for i in range(iterations):
+            self.set_bargraph(self.ledpulse.next())
+            time.sleep(sleep)
+
+    def set_bargraph(self, leds):
+        for i in range(6):
+            backlight.graph_set_led_state(i, leds[i])
 
     def get_progress(self, fm):
         return fm.thisPour / self.options['target_pour_size']
