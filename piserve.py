@@ -17,7 +17,7 @@ Extend FlowMeter
 """
 class PiServeFlowMeter(FlowMeter):
     def __init__(self, options = {}):
-        self.options = options
+        self.options = options or self.read_options()
         super().__init__(self.options['units'], [self.options['beverage']])
 
     def setup(self):
@@ -28,6 +28,21 @@ class PiServeFlowMeter(FlowMeter):
         GPIO.setmode(GPIO.BCM) # use real GPIO numbering
         GPIO.setup(self.options['gpio_pin'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
         GPIO.add_event_detect(self.options['gpio_pin'], GPIO.RISING, callback=self.on_click, bouncetime=20)
+
+    def read_options(self):
+        """
+        Return dict of options read from ENV.
+        """
+        return {
+            'gpio_pin': int(os.environ.get('PISERVE_GPIO_PIN')),
+            'large_pour_inactivity': int(os.environ.get('PISERVE_LARGE_POUR_INACTIVITY')),
+            'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
+            'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
+            'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
+            'idle_interval': float(os.environ.get('PISERVE_IDLE_INTERVAL')),
+            'units': os.environ.get('PISERVE_UNITS'),
+            'beverage': os.environ.get('PISERVE_BEVERAGE'),
+            }
 
     def on_click(self, channel):
         """
@@ -105,20 +120,6 @@ class LedPulse:
     def reset(self):
         self.iteration = 0
 
-class PiServeVoteMenu(MenuOption):
-    def left(self):
-        lcd.clear()
-        lcd.set_cursor_position(0, 1)
-        lcd.write("Pressed left!")
-
-    def right(self):
-        lcd.clear()
-        lcd.set_cursor_position(0, 1)
-        lcd.write("Pressed right!")
-
-    def cleanup(self):
-        lcd.clear()
-
 class PiServePresenter:
     def __init__(self, fm):
         self.fm = fm
@@ -138,8 +139,57 @@ class PiServePresenter:
     def poured_message(self):
         return "Serverade {0}".format(self.formatted_centiliters())
 
+class PiServeMenu(Menu):
+    def write_centered(self, row, text):
+        pos = int((self.lcd.COLS - len(text)) / 2)
+        self.write_row(row, ' ' * pos + text)
 
-class PiServeMenu:
+    def write_right(self, row, text):
+        pos = max(self.lcd.COLS - len(text) - 1, 0)
+        self.write_row(row, ' ' * pos + text)
+
+class PiServeMenuOption(MenuOption):
+    def __init__(self, fm):
+        super().__init__()
+        self.fm = fm
+        self.presenter = PiServePresenter(self.fm)
+
+class PiServeVoteMenu(PiServeMenuOption):
+    def setup(self, options):
+        self.options = options
+        self.message = None
+
+    def redraw(self, menu):
+        if self.message is not None:
+            menu.write_row(1, self.message)
+        else:
+            menu.lcd.clear()
+
+    def left(self):
+        self.message = "Pressed left!"
+        return True
+
+    def right(self):
+        self.message = "Pressed right!"
+        return False
+
+# TODO: Never gets triggered.
+class PiServeIdle(PiServeMenuOption):
+    def redraw(self, menu):
+        """
+        Triggered every `idle_interval` seconds after pouring.
+        """
+        menu.write_row(0, self.fm.getBeverage())
+        menu.write_row(1, self.presenter.pours_message())
+        menu.write_row(2, self.presenter.total_message())
+
+class PiServeDebug(PiServeMenuOption):
+    def redraw(self, menu):
+        menu.write_right(0, self.fm.getFormattedFlow())
+        menu.write_right(1, self.fm.getFormattedHertz())
+        menu.write_right(2, self.fm.getFormattedClickDelta())
+
+class PiServeProgress(PiServeMenuOption):
     max_chars = 16
     progress_interval = 0.5
     last_progress = 0
@@ -147,49 +197,42 @@ class PiServeMenu:
     color_beer = [255, 204, 0]
     color_red = [255, 0, 0]
 
-    def __init__(self, opts=None):
-        self.step = 0
-        self.ledpulse = LedPulse()
-        self.options = opts or self.read_options()
-        self.fm = PiServeFlowMeter(self.options)
-        self.fm.setup()
-        self.last_progress = self.fm.current_time()
-        self.presenter = PiServePresenter(self.fm)
-        self.show_idle()
+    def __init__(self, fm):
+        super().__init__(fm)
+        self.is_setup = False
 
-    def read_options(self):
-        """
-        Return dict of options read from ENV.
-        """
-        return {
-            'gpio_pin': int(os.environ.get('PISERVE_GPIO_PIN')),
-            'large_pour_inactivity': int(os.environ.get('PISERVE_LARGE_POUR_INACTIVITY')),
-            'small_pour_inactivity': int(os.environ.get('PISERVE_SMALL_POUR_INACTIVITY')),
-            'minimum_pour_size': float(os.environ.get('PISERVE_MINIMUM_POUR_SIZE')),
-            'target_pour_size': float(os.environ.get('PISERVE_TARGET_POUR_SIZE')),
-            'idle_interval': float(os.environ.get('PISERVE_IDLE_INTERVAL')),
-            'units': os.environ.get('PISERVE_UNITS'),
-            'beverage': os.environ.get('PISERVE_BEVERAGE'),
-            }
+    def setup(self, options):
+        #self.options = options or self.read_options()
+        self.options = self.fm.options
+        if not self.is_setup:
+            self.is_setup = True
+            self.ledpulse = LedPulse()
+            self.cleanup()
 
-    def run(self):
+    def redraw(self, menu):
         """
         Main run loop that triggers handlers on pours.
         """
-        while True:
-            if self.fm.has_poured():
-                # Triggers after 10 seconds of inactivity after a large pour.
-                if (self.fm.is_large_pour() and self.inactive_for(self.options['large_pour_inactivity'])):
-                    self.show_large_pour()
+        if self.fm.has_poured():
+            # Triggers after 10 seconds of inactivity after a large pour.
+            if (self.fm.is_large_pour() and self.inactive_for(self.options['large_pour_inactivity'])):
+                self.show_large_pour(menu)
 
-                # Triggers meter after small pour and 2 secs of inactivity
-                elif (self.fm.is_small_pour() and self.inactive_for(self.options['small_pour_inactivity'])):
-                    self.show_small_pour()
+            # Triggers meter after small pour and 2 secs of inactivity
+            elif (self.fm.is_small_pour() and self.inactive_for(self.options['small_pour_inactivity'])):
+                self.show_small_pour(menu)
 
-                elif (self.inactive_for(self.progress_interval, self.last_progress)):
-                    self.show_progress()
-            elif self.inactive_for(self.options['idle_interval'], self.last_idle):
-                self.show_idle()
+            elif (self.inactive_for(self.progress_interval, self.last_progress)):
+                self.show_progress(menu)
+        elif self.inactive_for(self.options['idle_interval'], self.last_idle):
+            self.show_idle(menu)
+
+    def cleanup(self):
+        self.reset_display()
+        self.is_setup = False
+        self.last_progress = self.millis()
+        self.last_idle = 0
+        self.step = 0
 
     def inactive_for(self, inactivity_time, last_time=None):
         """
@@ -198,73 +241,66 @@ class PiServeMenu:
         """
         if last_time is None:
             last_time = self.fm.lastClick
-        return self.fm.current_time() - last_time > inactivity_time * FlowMeter.MS_IN_A_SECOND
+        return self.millis() - last_time > inactivity_time * FlowMeter.MS_IN_A_SECOND
 
-    def reset_display(self):
+    def reset_display(self, menu=None):
         backlight.rgb(*self.color_white) # Set white background
         backlight.set_graph(0)
-        lcd.clear()
         self.ledpulse.reset()
+        if menu is not None:
+            menu.lcd.clear()
 
-    def show_progress(self):
+    def show_progress(self, menu):
         """
         Triggered every `progress_interval` milliseconds while pouring.
         """
-        self.last_progress = self.fm.current_time()
+        self.last_progress = self.millis()
         if self.step == 0:
-            self.reset_display()
+            self.reset_display(menu)
         self.step += 1
-        self.write_poured_info()
+        self.write_poured_info(menu)
         self.backlight_progress()
         backlight.set_graph(self.fm.get_progress())
-        #self.write_debug_info(fm)
 
-    def show_small_pour(self):
+    def show_small_pour(self, menu):
         """
         Method called after `small_pour_inactivity` time in seconds if thisPour is less than
         `minimum_pour_size`. Currently implemented to cancel pour and reset pour counter.
         """
         self.step = 0
-        self.reset_display()
+        self.reset_display(menu)
         backlight.rgb(*self.color_red)
-        self.write_centered(1, "No beer for you!")
-        self.write_centered(0, self.presenter.poured_message())
+        menu.write_centered(1, "No beer for you!")
+        menu.write_centered(0, self.presenter.poured_message())
         self.fm.reset_pour(False)
         time.sleep(5)
 
-    def show_large_pour(self):
+    def show_large_pour(self, menu):
         """
         Method called after `large_pour_inactivity` time in seconds if thisPour is more than
         `minimum_pour_size`.
         """
         self.step = 0
-        self.reset_display()
-        self.write_centered(0, "Cheers!")
-        self.write_centered(1, self.presenter.poured_message())
+        self.reset_display(menu)
+        menu.write_centered(0, "Cheers!")
+        menu.write_centered(1, self.presenter.poured_message())
         self.fm.reset_pour(True)
-        touch.bind_defaults(PiServeVoteMenu())
         self.sweep()
         time.sleep(5)
 
-    def show_idle(self):
+    def show_idle(self, menu):
         """
         Triggered every `idle_interval` seconds after pouring.
-        TODO: Move to an Idle class extending MenuOption?
         """
-        self.last_idle = self.fm.current_time()
-        self.reset_display()
-        self.write_msg(0, 0, self.fm.getBeverage())
-        self.write_msg(0, 1, self.presenter.pours_message())
-        self.write_msg(0, 2, self.presenter.total_message())
+        self.last_idle = self.millis()
+        self.reset_display(menu)
+        menu.write_row(0, self.fm.getBeverage())
+        menu.write_row(1, self.presenter.pours_message())
+        menu.write_row(2, self.presenter.total_message())
 
-    def write_poured_info(self):
-        self.write_centered(0, self.fm.getBeverage())
-        self.write_centered(1, self.presenter.formatted_centiliters())
-
-    def write_debug_info(self):
-        self.write_right(0, self.fm.getFormattedFlow())
-        self.write_right(1, self.fm.getFormattedHertz())
-        self.write_right(2, self.fm.getFormattedClickDelta())
+    def write_poured_info(self, menu):
+        menu.write_centered(0, self.fm.getBeverage())
+        menu.write_centered(1, self.presenter.formatted_centiliters())
 
     def backlight_progress(self):
         # Sweep if progress > target
@@ -281,7 +317,7 @@ class PiServeMenu:
             if x % 10 == 0:
                 self.set_bargraph(self.ledpulse.next())
 
-    def led_pulse(self, iterations=100, sleep=0.1):
+    def bargraph_pulse(self, iterations=100, sleep=0.1):
         for i in range(iterations):
             self.set_bargraph(self.ledpulse.next())
             time.sleep(sleep)
@@ -290,18 +326,21 @@ class PiServeMenu:
         for i in range(6):
             backlight.graph_set_led_state(i, leds[i])
 
-    def write_centered(self, row, msg):
-        pos = int((self.max_chars - len(msg)) / 2)
-        self.write_msg(pos, row, msg)
-
-    def write_right(self, row, msg):
-        pos = max(self.max_chars - len(msg) - 1, 0)
-        self.write_msg(pos, row, msg)
-
-    def write_msg(self, pos, row, msg):
-        lcd.set_cursor_position(pos, row)
-        lcd.write(msg)
-
 if __name__ == '__main__':
-    PiServeMenu().run()
+    fm = PiServeFlowMeter()
+    fm.setup()
+    menu = PiServeMenu(
+            structure={
+                    'Servera': PiServeProgress(fm),
+                    'Debug': PiServeDebug(fm),
+                    'Vote': PiServeVoteMenu(fm),
+                    },
+            lcd=lcd,
+            idle_handler=PiServeIdle(fm),
+            idle_timeout=15,
+            )
+    touch.bind_defaults(menu)
+    while True:
+        menu.redraw()
+        time.sleep(0.01)
 
