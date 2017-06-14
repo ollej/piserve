@@ -68,7 +68,7 @@ class PiServeFlowMeter(FlowMeter):
     def centiliters(self):
         return round(self.thisPour * 100)
 
-    def has_poured(self):
+    def is_pouring(self):
         """
         Returns True if a pour has started.
         """
@@ -149,10 +149,73 @@ class PiServeMenu(Menu):
         self.write_row(row, ' ' * pos + text)
 
 class PiServeMenuOption(MenuOption):
+    PISERVE_SECTION = 'piserve'
+
     def __init__(self, fm):
         super().__init__()
         self.fm = fm
         self.presenter = PiServePresenter(self.fm)
+
+    def setup(self, config):
+        """
+        Called when setting up menu.
+        """
+        pass
+
+    def begin(self):
+        """
+        Called when entering the plugin from the menu.
+        """
+        pass
+
+    def cleanup(self):
+        """
+        Called when pressing cancel button and exiting the plugin back to the menu.
+        """
+        pass
+
+    def select(self):
+        """
+        Select option.
+        Must return true to allow exit
+        """
+        return True
+
+    def up(self):
+        """
+        Called when pressing up button.
+        """
+        pass
+
+    def down(self):
+        """
+        Called when pressing down button.
+        """
+        pass
+
+    def left(self):
+        """
+        Called when pressing left button.
+        """
+        pass
+
+    def right(self):
+        """
+        Called when pressing right button.
+        """
+        pass
+
+    def set_option(self, option, value):
+        """
+        Set option in PiServe section to value.
+        """
+        super().set_option(self.PISERVE_SECTION, option, value)
+
+    def get_option(self, option, default=None):
+        """
+        Set option from PiServe section, defaulting to default.
+        """
+        super().get_option(self.PISERVE_SECTION, option, default)
 
 class PiServeVoteMenu(PiServeMenuOption):
     def setup(self, options):
@@ -173,15 +236,16 @@ class PiServeVoteMenu(PiServeMenuOption):
         self.message = "Pressed right!"
         return False
 
-# TODO: Never gets triggered.
 class PiServeIdle(PiServeMenuOption):
     def redraw(self, menu):
         """
         Triggered every `idle_interval` seconds after pouring.
         """
-        menu.write_row(0, self.fm.getBeverage())
+        #menu.write_row(0, self.fm.getBeverage())
+        menu.write_row(0, 'Idlling...')
         menu.write_row(1, self.presenter.pours_message())
         menu.write_row(2, self.presenter.total_message())
+        return self.fm.is_pouring()
 
 class PiServeDebug(PiServeMenuOption):
     def redraw(self, menu):
@@ -200,20 +264,31 @@ class PiServeProgress(PiServeMenuOption):
     def __init__(self, fm):
         super().__init__(fm)
         self.is_setup = False
+        self.can_idle = False
 
     def setup(self, options):
+        """
+        Called when setting up menu.
+        """
         #self.options = options or self.read_options()
         self.options = self.fm.options
         if not self.is_setup:
-            self.is_setup = True
             self.ledpulse = LedPulse()
             self.cleanup()
+            self.is_setup = True
+
+    def begin(self):
+        """
+        Called when entering the plugin from the menu.
+        """
+        self.fm.reset_pour()
+        self.reset_display()
 
     def redraw(self, menu):
         """
         Main run loop that triggers handlers on pours.
         """
-        if self.fm.has_poured():
+        if self.fm.is_pouring():
             # Triggers after 10 seconds of inactivity after a large pour.
             if (self.fm.is_large_pour() and self.inactive_for(self.options['large_pour_inactivity'])):
                 self.show_large_pour(menu)
@@ -228,20 +303,12 @@ class PiServeProgress(PiServeMenuOption):
             self.show_idle(menu)
 
     def cleanup(self):
+        """
+        Called when pressing cancel button and exiting the plugin back to the menu.
+        """
         self.reset_display()
-        self.is_setup = False
-        self.last_progress = self.millis()
         self.last_idle = 0
         self.step = 0
-
-    def inactive_for(self, inactivity_time, last_time=None):
-        """
-        Return true if there have been no clicks for `inactivity_time` seconds.
-        last_time defaults to lastClick on FlowMeter.
-        """
-        if last_time is None:
-            last_time = self.fm.lastClick
-        return self.millis() - last_time > inactivity_time * FlowMeter.MS_IN_A_SECOND
 
     def reset_display(self, menu=None):
         backlight.rgb(*self.color_white) # Set white background
@@ -301,6 +368,15 @@ class PiServeProgress(PiServeMenuOption):
     def write_poured_info(self, menu):
         menu.write_centered(0, self.fm.getBeverage())
         menu.write_centered(1, self.presenter.formatted_centiliters())
+
+    def inactive_for(self, inactivity_time, last_time=None):
+        """
+        Return true if there have been no clicks for `inactivity_time` seconds.
+        last_time defaults to lastClick on FlowMeter.
+        """
+        if last_time is None:
+            last_time = self.fm.lastClick
+        return self.millis() - last_time > inactivity_time * FlowMeter.MS_IN_A_SECOND
 
     def backlight_progress(self):
         # Sweep if progress > target
