@@ -150,9 +150,13 @@ class PiServeMenu(Menu):
 
 class PiServeMenuOption(MenuOption):
     PISERVE_SECTION = 'piserve'
+    INACTIVITY_TIME = 5
+    MS_IN_A_SECOND = 1000
 
     def __init__(self, fm):
         super().__init__()
+        self.last_activity = 0
+        self.can_idle = True
         self.fm = fm
         self.presenter = PiServePresenter(self.fm)
 
@@ -160,7 +164,7 @@ class PiServeMenuOption(MenuOption):
         """
         Called when setting up menu.
         """
-        pass
+        self.config = config
 
     def begin(self):
         """
@@ -196,6 +200,7 @@ class PiServeMenuOption(MenuOption):
     def left(self):
         """
         Called when pressing left button.
+        Return True to stay in plugin.
         """
         pass
 
@@ -209,43 +214,104 @@ class PiServeMenuOption(MenuOption):
         """
         Set option in PiServe section to value.
         """
-        super().set_option(self.PISERVE_SECTION, option, value)
+        return super().set_option(self.PISERVE_SECTION, option, value)
 
     def get_option(self, option, default=None):
         """
         Set option from PiServe section, defaulting to default.
         """
-        super().get_option(self.PISERVE_SECTION, option, default)
+        return super().get_option(self.PISERVE_SECTION, option, default)
+
+    def inactive_for(self, inactivity_time, last_time=None):
+        """
+        Return true if there have been no activity for inactivity_time seconds
+        last_time defaults to self.last_activity
+        """
+        if last_time is None:
+            last_time = self.last_activity
+        return self.millis() - last_time > inactivity_time * self.MS_IN_A_SECOND
+
 
 class PiServeVoteMenu(PiServeMenuOption):
-    def setup(self, options):
-        self.options = options
+    def setup(self, config):
+        self.config = config
+        self.message = None
+        self.likes = 0
+        self.dislikes = 0
+
+    def begin(self):
+        self.likes = int(self.get_option('likes', default=0))
+        self.dislikes = int(self.get_option('dislikes', default=0))
+
+    def cleanup(self):
         self.message = None
 
     def redraw(self, menu):
-        if self.message is not None:
-            menu.write_row(1, self.message)
-        else:
+        if self.inactive_for(self.INACTIVITY_TIME):
+            self.message = None
+            self.last_activity = self.millis()
+        if self.message is None:
             menu.lcd.clear()
+            self.message = 'Place your vote!'
+        menu.clear_row(0)
+        menu.write_row(1, self.message)
+        menu.clear_row(2)
 
     def left(self):
-        self.message = "Pressed left!"
+        self.last_activity = self.millis()
+        self.message = "Thanks for liking!"
+        self.likes += 1
+        self.set_option('likes', str(self.likes))
         return True
 
     def right(self):
-        self.message = "Pressed right!"
-        return False
+        self.last_activity = self.millis()
+        self.message = "Aww, shucks!"
+        self.dislikes += 1
+        self.set_option('dislikes', str(self.dislikes))
 
 class PiServeIdle(PiServeMenuOption):
+    MODE_STATS = 'stats'
+    MODE_INFO = 'info'
+
+    def begin(self):
+        # The setup() method is never called on the idle handler
+        if self.config is None:
+            self.config = menu.config
+        self.mode = self.MODE_INFO
+        self.likes = int(self.get_option('likes', default=0))
+        self.dislikes = int(self.get_option('dislikes', default=0))
+        self.beer_info_row1 = self.get_option('beer_info_row1', default='')
+        self.beer_info_row2 = self.get_option('beer_info_row2', default='')
+
     def redraw(self, menu):
         """
-        Triggered every `idle_interval` seconds after pouring.
+        Switch info every INACTIVITY_TIME seconds.
         """
-        #menu.write_row(0, self.fm.getBeverage())
-        menu.write_row(0, 'Idlling...')
-        menu.write_row(1, self.presenter.pours_message())
-        menu.write_row(2, self.presenter.total_message())
-        return self.fm.is_pouring()
+        if self.inactive_for(self.INACTIVITY_TIME):
+            self.last_activity = self.millis()
+            if self.mode == self.MODE_STATS:
+                self.mode = self.MODE_INFO
+            else:
+                self.mode = self.MODE_STATS
+
+        if self.mode == self.MODE_STATS:
+            self.write_stats(menu)
+        else:
+            self.write_info(menu)
+
+        if self.fm.is_pouring():
+            menu.cancel()
+
+    def write_stats(self, menu):
+        menu.write_row(0, self.presenter.pours_message())
+        menu.write_row(1, self.presenter.total_message())
+        menu.write_row(2, "{0} likes {1} dislikes".format(self.likes, self.dislikes))
+
+    def write_info(self, menu):
+        menu.write_row(0, self.fm.getBeverage())
+        menu.write_row(1, self.beer_info_row1)
+        menu.write_row(2, self.beer_info_row2)
 
 class PiServeDebug(PiServeMenuOption):
     def redraw(self, menu):
@@ -254,7 +320,6 @@ class PiServeDebug(PiServeMenuOption):
         menu.write_right(2, self.fm.getFormattedClickDelta())
 
 class PiServeProgress(PiServeMenuOption):
-    max_chars = 16
     progress_interval = 0.5
     last_progress = 0
     color_white = [255, 255, 255]
@@ -264,12 +329,12 @@ class PiServeProgress(PiServeMenuOption):
     def __init__(self, fm):
         super().__init__(fm)
         self.is_setup = False
-        self.can_idle = False
 
-    def setup(self, options):
+    def setup(self, config):
         """
         Called when setting up menu.
         """
+        self.config = config
         #self.options = options or self.read_options()
         self.options = self.fm.options
         if not self.is_setup:
@@ -374,9 +439,7 @@ class PiServeProgress(PiServeMenuOption):
         Return true if there have been no clicks for `inactivity_time` seconds.
         last_time defaults to lastClick on FlowMeter.
         """
-        if last_time is None:
-            last_time = self.fm.lastClick
-        return self.millis() - last_time > inactivity_time * FlowMeter.MS_IN_A_SECOND
+        return super().inactive_for(inactivity_time, last_time or self.fm.lastClick)
 
     def backlight_progress(self):
         # Sweep if progress > target
@@ -413,7 +476,7 @@ if __name__ == '__main__':
                     },
             lcd=lcd,
             idle_handler=PiServeIdle(fm),
-            idle_timeout=15,
+            idle_time=10,
             )
     touch.bind_defaults(menu)
     while True:
